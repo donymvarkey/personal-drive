@@ -1,0 +1,233 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(uuid())
+  email          String   @unique
+  name           String
+  hashedPassword String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  files        File[]
+  folders      Folder[]
+  starredItems StarredItem[]
+  activities   ActivityLog[]
+  settings     AppSettings?
+
+  @@map("users")
+}
+
+model File {
+  id            String    @id @default(uuid())
+  originalName  String
+  storedName    String    @unique
+  mimeType      String
+  extension     String
+  size          BigInt
+  checksum      String    // SHA-256 hash
+  folderId      String?
+  folder        Folder?   @relation(fields: [folderId], references: [id])
+  ownerId       String
+  owner         User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  storageStatus String    @default("ready") // ready, uploading, processing, corrupted
+  isStarred     Boolean   @default(false)
+  isTrashed     Boolean   @default(false)
+  trashedAt     DateTime?
+  trashedFrom   String?   // Original relative path before moving to trash
+  isExternal    Boolean   @default(false) // Indexed from existing external SSD files
+  deletedAt     DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  starredItems StarredItem[]
+  activities   ActivityLog[]
+  versions     FileVersion[]
+
+  @@index([ownerId])
+  @@index([folderId])
+  @@index([checksum])
+  @@index([storageStatus])
+  @@index([deletedAt])
+  @@index([isTrashed])
+  @@index([isExternal])
+  @@map("files")
+}
+
+model Folder {
+  id          String    @id @default(uuid())
+  name        String
+  parentId    String?
+  parent      Folder?   @relation("FolderChildren", fields: [parentId], references: [id])
+  children    Folder[]  @relation("FolderChildren")
+  ownerId     String
+  owner       User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  files       File[]
+  path        String?   // Relative directory path on external SSD
+  isExternal  Boolean   @default(false) // Discovered from external SSD hierarchy
+  isStarred   Boolean   @default(false)
+  isTrashed   Boolean   @default(false)
+  trashedAt   DateTime?
+  trashedFrom String?   // Original relative path before moving to trash
+  deletedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  starredItems StarredItem[]
+  activities   ActivityLog[]
+
+  @@index([ownerId])
+  @@index([parentId])
+  @@index([path])
+  @@index([deletedAt])
+  @@index([isTrashed])
+  @@index([isExternal])
+  @@map("folders")
+}
+
+model StarredItem {
+  id        String   @id @default(uuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  fileId    String?
+  file      File?    @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  folderId  String?
+  folder    Folder?  @relation(fields: [folderId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([ownerId, fileId])
+  @@unique([ownerId, folderId])
+  @@index([ownerId])
+  @@index([fileId])
+  @@index([folderId])
+  @@map("starred_items")
+}
+
+model StorageHealth {
+  id          String   @id @default(uuid())
+  checkedAt   DateTime @default(now())
+  status      String
+  storagePath String
+  totalBytes  BigInt?
+  usedBytes   BigInt?
+  freeBytes   BigInt?
+  details     Json?
+
+  @@map("storage_health")
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  action    String   // upload, preview, download, rename, move, copy, delete, restore
+  fileId    String?
+  file      File?    @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  folderId  String?
+  folder    Folder?  @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  itemName  String
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  details   Json?
+  createdAt DateTime @default(now())
+
+  @@index([ownerId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+model FileVersion {
+  id            String   @id @default(uuid())
+  fileId        String
+  file          File     @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  storedName    String   // Physical stored UUID on disk
+  size          BigInt
+  checksum      String   // SHA-256
+  versionNumber Int
+  note          String?  // Optional version comment
+  createdAt     DateTime @default(now())
+
+  @@unique([fileId, versionNumber])
+  @@index([fileId])
+  @@index([createdAt])
+  @@map("file_versions")
+}
+
+model AppSettings {
+  id                  String    @id @default(uuid())
+  ownerId             String    @unique
+  owner               User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  theme               String    @default("system")
+  trashRetentionDays  Int       @default(30) // 0 = manual only, 7, 30, 60, 90
+  maxVersionsPerFile  Int       @default(10) // 0 = unlimited, 3, 5, 10
+  backupRetentionDays Int       @default(30) // days to retain backups
+  backupScheduleHours Int       @default(24) // 0 = manual only, 24 = daily
+  lastScanAt          DateTime?
+  indexedFilesCount   Int       @default(0)
+  indexedFoldersCount Int       @default(0)
+  updatedAt           DateTime  @updatedAt
+
+  @@map("app_settings")
+}
+
+model StorageMigration {
+  id           String    @id @default(uuid())
+  status       String    // idle, validating, copying, syncing, verifying, ready_to_switch, completed, failed, rolled_back
+  sourcePath   String
+  destPath     String
+  totalFiles   Int       @default(0)
+  copiedFiles  Int       @default(0)
+  totalBytes   BigInt    @default(0)
+  copiedBytes  BigInt    @default(0)
+  currentFile  String?
+  errorMessage String?
+  startedAt    DateTime  @default(now())
+  completedAt  DateTime?
+  writeLocked  Boolean   @default(false)
+
+  @@map("storage_migrations")
+}
+
+model BackupRecord {
+  id              String    @id @default(uuid())
+  status          String    // pending, in_progress, completed, failed, verified
+  backupType      String    @default("manual") // manual, scheduled
+  archivePath     String    // Path to backup directory or archive
+  sizeBytes       BigInt    @default(0)
+  totalFiles      Int       @default(0)
+  databaseDumped  Boolean   @default(false)
+  verified        Boolean   @default(false)
+  verificationLog String?
+  errorMessage    String?
+  startedAt       DateTime  @default(now())
+  completedAt     DateTime?
+  retentionDays   Int       @default(30)
+
+  @@index([status])
+  @@index([startedAt])
+  @@map("backup_records")
+}
+
+model StorageScanRecord {
+  id              String    @id @default(uuid())
+  status          String    // in_progress, completed, failed
+  startedAt       DateTime  @default(now())
+  completedAt     DateTime?
+  filesIndexed    Int       @default(0)
+  foldersIndexed  Int       @default(0)
+  bytesIndexed    BigInt    @default(0)
+  changesDetected Int       @default(0)
+  errors          String?
+
+  @@index([status])
+  @@index([startedAt])
+  @@map("storage_scan_records")
+}

@@ -1,0 +1,77 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: personal_drive_db
+    env_file: .env
+    environment:
+      POSTGRES_USER: personal_drive
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: personal_drive
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "effective_cache_size=1536MB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "max_connections=100"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      - "-c"
+      - "wal_buffers=16MB"
+    volumes:
+      - personal_drive_pgdata:/var/lib/postgresql/data
+    networks:
+      - personal_drive_net
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1536M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U personal_drive -d personal_drive"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: personal_drive_app
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgresql://personal_drive:changeme@db:5432/personal_drive"
+      DRIVE_STORAGE_PATH: "/app/storage"
+      DRIVE_STORAGE_UUID: "${DRIVE_STORAGE_UUID:-}"
+      DRIVE_STORAGE_FS_TYPE: "${DRIVE_STORAGE_FS_TYPE:-exfat}"
+      DRIVE_BACKUP_PATH: "/app/backups"
+      NODE_OPTIONS: "--max-old-space-size=1536"
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - ${DRIVE_STORAGE_PATH}:/app/storage
+      - ${DRIVE_BACKUP_PATH:-./drive_backups}:/app/backups
+    networks:
+      - personal_drive_net
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+
+volumes:
+  personal_drive_pgdata:
+    name: personal_drive_pgdata
+
+networks:
+  personal_drive_net:
+    name: personal_drive_net
+    driver: bridge

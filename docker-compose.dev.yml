@@ -1,0 +1,7 @@
+# Development override for local testing on macOS/Linux.
+# Binds PostgreSQL strictly to 127.0.0.1 (loopback) so it is NOT exposed to the network.
+# Uses DB_PORT (defaults to 5433 to avoid conflicts with existing Postgres on 5432).
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DB_PORT:-5433}:5432"
